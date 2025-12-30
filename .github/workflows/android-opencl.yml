@@ -1,0 +1,61 @@
+name: android-arm64-opencl-llama-server
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout llama.cpp
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build unzip zip
+
+      - name: Download Android NDK
+        run: |
+          NDK_VER=r26d
+          curl -L -o ndk.zip https://dl.google.com/android/repository/android-ndk-${NDK_VER}-linux.zip
+          unzip -q ndk.zip
+          echo "ANDROID_NDK_HOME=${{ github.workspace }}/android-ndk-${NDK_VER}" >> $GITHUB_ENV
+
+      # NOTE:
+      # OpenCL on Android needs headers + loader. llama.cpp has guidance around
+      # building/installing an OpenCL ICD loader for the NDK sysroot.
+      # Here we build with OpenCL enabled and let runtime provide libOpenCL.so
+      # (Adreno devices expose it). Targeting (for now) S25 (snap 8 elite) 
+
+      - name: Configure (Android arm64, OpenCL enabled)
+        run: |
+          cmake -S . -B build-android \
+            -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-28 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_OPENCL=ON \
+            -DLLAMA_SERVER=ON \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF
+
+      - name: Build
+        run: |
+          cmake --build build-android --target llama-server -j
+
+      - name: Package artifact
+        run: |
+          mkdir -p dist
+          cp build-android/bin/llama-server dist/
+          chmod +x dist/llama-server
+          (cd dist && zip -9 ../llama-server-android-arm64-opencl.zip llama-server)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-server-android-arm64-opencl
+          path: llama-server-android-arm64-opencl.zip
